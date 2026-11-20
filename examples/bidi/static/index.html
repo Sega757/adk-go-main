@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADK Gemini Live API Toolkit Demo</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="js/app.js" type="module"></script>
+  </head>
+
+  <body>
+    <header>
+      <h1>ADK Gemini Live API Toolkit Demo</h1>
+      <div class="subtitle">Real-time bidirectional streaming with Google ADK</div>
+      <div class="header-options">
+        <label class="header-checkbox" title="Enable model to proactively respond without explicit prompts (Native audio models only)" style="display: none;">
+          <input type="checkbox" id="enableProactivity" aria-label="Enable proactivity">
+          <span>Proactivity</span>
+        </label>
+        <label class="header-checkbox" title="Enable model to detect and adapt to emotional cues (Native audio models only)" style="display: none;">
+          <input type="checkbox" id="enableAffectiveDialog" aria-label="Enable affective dialog">
+          <span>Affective Dialog</span>
+        </label>
+      </div>
+      <div class="connection-status" role="status" aria-live="polite" title="Connecting to ADK streaming server...">
+        <span class="status-indicator connecting" id="statusIndicator" aria-hidden="true"></span>
+        <span id="statusText">Connecting...</span>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <div class="container">
+        <div id="messages" role="log" aria-label="Chat messages" aria-live="polite">
+          <div id="emptyState" class="empty-state">
+            <div class="empty-state-icon" aria-hidden="true">💬</div>
+            <h2>Start a Conversation</h2>
+            <p>Type a message below, speak, or drag & drop / paste an image to interact with the agent.</p>
+          </div>
+        </div>
+        <button type="button" id="scrollToBottomBtn" class="scroll-bottom-btn" aria-label="Scroll to bottom of chat" title="Scroll to latest message" aria-controls="messages" style="display: none;">↓ New messages</button>
+
+        <div class="input-container">
+          <form id="messageForm">
+            <div class="input-wrapper">
+              <input
+                type="text"
+                id="message"
+                name="message"
+                placeholder="Type your message here..."
+                aria-label="Type a message"
+                autocomplete="off"
+                disabled
+              />
+              <button type="submit" id="sendButton" aria-label="Send message" disabled>Send</button>
+              <button type="button" id="startAudioButton" aria-pressed="false" aria-label="Toggle voice input" disabled>🎤 Start Voice</button>
+              <button type="button" id="cameraButton" aria-label="Open camera preview" aria-haspopup="dialog" aria-controls="cameraModal" disabled>📷 Camera</button>
+              <button type="button" id="streamVideoButton" aria-pressed="false" aria-label="Toggle video streaming" disabled>📹 Stream Video</button>
+              <button type="button" id="sendFileButton" aria-label="Send image file" disabled>📁 Send File</button>
+              <input type="file" id="fileInput" style="display: none;" accept="image/*" aria-label="Select image file to send">
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="console-panel">
+        <div class="console-header">
+          <h2>Event Console</h2>
+          <div class="console-controls">
+            <label class="console-checkbox" title="Toggle PCM audio events in console log">
+              <input type="checkbox" id="showAudioEvents" aria-label="Show audio events" aria-controls="consoleContent">
+              <span>Show audio</span>
+            </label>
+            <button id="clearConsole" class="console-clear-btn" aria-label="Clear event console" aria-controls="consoleContent" title="Console is empty" disabled>Clear</button>
+          </div>
+        </div>
+        <div id="consoleContent" class="console-content" role="log" aria-label="Event log">
+          <div id="consoleEmptyState" class="console-empty-state">
+            <div class="console-empty-icon" aria-hidden="true">⚡</div>
+            <h3>Console Empty</h3>
+            <p>Real-time WebSocket events and debug logs will appear here.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Camera Preview Modal -->
+    <div id="cameraModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="cameraModalTitle">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="cameraModalTitle">Camera Preview</h3>
+          <button id="closeCameraModal" class="close-btn" aria-label="Close camera preview" title="Close camera preview">&times;</button>
+        </div>
+        <div class="modal-body">
+          <video id="cameraPreview" autoplay playsinline aria-label="Live camera preview"></video>
+        </div>
+        <div class="modal-footer">
+          <button id="cancelCamera" class="btn-secondary" aria-label="Cancel camera preview" title="Cancel camera preview">Cancel</button>
+          <button id="captureImage" class="btn-primary" aria-label="Capture and send image from camera" title="Capture and send image from camera">📷 Send Image</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Image Lightbox Modal -->
+    <div id="imageModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="imageModalTitle">
+      <div class="modal-content image-modal-content">
+        <div class="modal-header">
+          <h3 id="imageModalTitle">Image Preview</h3>
+          <button id="closeImageModal" class="close-btn" aria-label="Close image preview" title="Close image preview">&times;</button>
+        </div>
+        <div class="modal-body">
+          <img id="imageModalImg" src="" alt="Full size image preview">
+        </div>
+        <div class="modal-footer">
+          <a id="downloadImageBtn" class="btn-primary" download="image.png" href="#" aria-label="Download full-size image" title="Download image to your computer">💾 Download Image</a>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

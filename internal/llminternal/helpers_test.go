@@ -1,0 +1,43 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package llminternal
+
+import (
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/tool"
+)
+
+// mockLLMAgent satisfies both agent.Agent (via embedding) and llminternal.Agent (via internal() implementation)
+type mockLLMAgent struct {
+	agent.Agent
+	s *State
+}
+
+var _ Agent = (*mockLLMAgent)(nil)
+
+func (m *mockLLMAgent) internal() *State {
+	return m.s
+}
+
+// ExportAppendTools exports appendTools for testing in llminternal_test package.
+func ExportAppendTools(r *model.LLMRequest, tools ...tool.Tool) error {
+	return appendTools(r, tools...)
+}
+
+// ExportFormatTargets exports formatTargets for testing in llminternal_test package.
+func ExportFormatTargets(targets []agent.Agent) string {
+	return formatTargets(targets)
+}

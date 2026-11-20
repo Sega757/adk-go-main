@@ -1,0 +1,189 @@
+// Copyright 2025 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package llminternal
+
+import (
+	"encoding/json"
+	"fmt"
+	"iter"
+
+	"google.golang.org/genai"
+
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/internal/utils"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/toolconfirmation"
+)
+
+type confirmedCall struct {
+	confirmation *toolconfirmation.ToolConfirmation
+	call         genai.FunctionCall
+}
+
+func RequestConfirmationRequestProcessor(ctx agent.InvocationContext, req *model.LLMRequest, f *Flow) iter.Seq2[*session.Event, error] {
+	return func(yield func(*session.Event, error) bool) {
+		llmAgent := asLLMAgent(ctx.Agent())
+		if llmAgent == nil {
+			return // In python, no error is yielded.
+		}
+
+		if ctx.Session() == nil {
+			return
+		}
+		sessEvents := ctx.Session().Events()
+		if sessEvents == nil || sessEvents.Len() == 0 {
+			return
+		}
+
+		var confirmationResponses map[string]toolconfirmation.ToolConfirmation
+		confirmationEventIndex := -1
+		for k := sessEvents.Len() - 1; k >= 0; k-- {
+			event := sessEvents.At(k)
+			// Find the first event authored by user
+			if event.Author != "user" {
+				continue
+			}
+			if !utils.HasFunctionResponses(event.Content) {
+				return
+			}
+			// Performance Optimization by Bolt: Iterate directly over event.Content.Parts
+			// to avoid intermediate slice allocations from utils.FunctionResponses.
+			for _, p := range event.Content.Parts {
+				if p == nil || p.FunctionResponse == nil {
+					continue
+				}
+				funcResp := p.FunctionResponse
+				if funcResp.Name != toolconfirmation.FunctionCallName {
+					continue
+				}
+				var tc toolconfirmation.ToolConfirmation
+				if funcResp.Response != nil {
+					resp, hasResponseKey := funcResp.Response["response"]
+					// ADK web client will send a request that is always encapsulated in a 'response' key.
+					if hasResponseKey && len(funcResp.Response) == 1 {
+						if jsonString, ok := resp.(string); ok {
+							err := json.Unmarshal([]byte(jsonString), &tc)
+							if err != nil {
+								yield(nil, fmt.Errorf("error 'response' key found but failed unmarshalling confirmation function response for event id %q: %w", event.ID, err))
+								return
+							}
+						} else {
+							yield(nil, fmt.Errorf("error 'response' key found but value is not a string for confirmation function response for event id %q", event.ID))
+							return
+						}
+					} else {
+						tempJSON, err := json.Marshal(funcResp.Response)
+						if err != nil {
+							yield(nil, fmt.Errorf("error failed marshalling confirmation function response for event id %q: %w", event.ID, err))
+							return
+						}
+						err = json.Unmarshal(tempJSON, &tc)
+						if err != nil {
+							yield(nil, fmt.Errorf("error failed unmarshalling confirmation function response for event id %q: %w", event.ID, err))
+							return
+						}
+					}
+				}
+				if confirmationResponses == nil {
+					confirmationResponses = make(map[string]toolconfirmation.ToolConfirmation)
+				}
+				confirmationResponses[funcResp.ID] = tc
+			}
+			confirmationEventIndex = k
+			break
+		}
+
+		if len(confirmationResponses) == 0 {
+			return
+		}
+
+		toolsmap := make(map[string]tool.Tool, len(f.Tools))
+		for _, tool := range f.Tools {
+			toolsmap[tool.Name()] = tool
+		}
+
+		for k := confirmationEventIndex - 1; k >= 0; k-- {
+			event := sessEvents.At(k)
+			// Find the system generated FunctionCall event requesting the tool confirmation
+			if !utils.HasFunctionCalls(event.Content) {
+				continue
+			}
+			// Performance Optimization by Bolt: Iterate directly over event.Content.Parts
+			// to avoid intermediate slice allocations from utils.FunctionCalls.
+			toolsToResumeByFunctionCallID := map[string]*confirmedCall{}
+			for _, p := range event.Content.Parts {
+				if p == nil || p.FunctionCall == nil {
+					continue
+				}
+				functionCall := p.FunctionCall
+				confirmation, ok := confirmationResponses[functionCall.ID]
+				if !ok {
+					continue
+				}
+				originalFunctionCall, err := toolconfirmation.OriginalCallFrom(functionCall)
+				if err != nil {
+					continue
+				}
+
+				toolsToResumeByFunctionCallID[originalFunctionCall.ID] = &confirmedCall{
+					confirmation: &confirmation,
+					call:         *originalFunctionCall,
+				}
+			}
+
+			if len(toolsToResumeByFunctionCallID) == 0 {
+				continue
+			}
+
+			// TODO consider forward or backward pass instead of nested loops
+			// Remove the tools that have already been confirmed.
+			for j := sessEvents.Len() - 1; j > confirmationEventIndex; j-- {
+				event = sessEvents.At(j)
+				if !utils.HasFunctionResponses(event.Content) {
+					continue
+				}
+				// Performance Optimization by Bolt: Iterate directly over event.Content.Parts
+				// to avoid intermediate slice allocations from utils.FunctionResponses.
+				for _, p := range event.Content.Parts {
+					if p != nil && p.FunctionResponse != nil {
+						delete(toolsToResumeByFunctionCallID, p.FunctionResponse.ID)
+					}
+				}
+				if len(toolsToResumeByFunctionCallID) == 0 {
+					break
+				}
+			}
+			if len(toolsToResumeByFunctionCallID) == 0 {
+				continue
+			}
+
+			parts := make([]*genai.Part, 0, len(toolsToResumeByFunctionCallID))
+			toolsToResumeConfirmation := make(map[string]*toolconfirmation.ToolConfirmation, len(toolsToResumeByFunctionCallID))
+			for callID, cc := range toolsToResumeByFunctionCallID {
+				parts = append(parts, &genai.Part{FunctionCall: &cc.call})
+				toolsToResumeConfirmation[callID] = cc.confirmation
+			}
+
+			ev, err := f.handleFunctionCalls(ctx, toolsmap, &model.LLMResponse{
+				Content: &genai.Content{Parts: parts, Role: genai.RoleUser},
+			}, toolsToResumeConfirmation, nil)
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
+}
